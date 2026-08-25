@@ -1,0 +1,25 @@
+{
+    "name": "depman/client",
+    "description": "Reports installed Composer dependencies to DepMan from a post-install hook.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Depman\\Client\\": "src/"
+        }
+    },
+    "bin": [
+        "bin/depman"
+    ],
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        }
+    }
+}

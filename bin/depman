@@ -1,0 +1,129 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Depman\Client\Client;
+use Depman\Client\Config;
+use Depman\Client\Logger;
+use Depman\Client\Reporter;
+use Depman\Client\Resolver;
+use Depman\Client\ScriptHandler;
+use Depman\Client\Token;
+
+// Composer 2.2+ hands the bin proxy the autoloader path directly, which is the
+// only reliable option when the package is installed from a symlinked path
+// repository. The rest are fallbacks for older Composer and standalone use.
+$candidates = array_filter([
+    $_composer_autoload_path ?? null,
+    __DIR__.'/../../../autoload.php',
+    __DIR__.'/../vendor/autoload.php',
+    getcwd().'/vendor/autoload.php',
+]);
+
+$loaded = false;
+
+foreach ($candidates as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        $loaded = true;
+        break;
+    }
+}
+
+if (! $loaded) {
+    fwrite(STDERR, "depman: could not locate the Composer autoloader.\n");
+    exit(1);
+}
+
+$argv = $_SERVER['argv'] ?? [];
+$command = $argv[1] ?? 'help';
+$root = ScriptHandler::projectRoot();
+
+$options = [];
+foreach (array_slice($argv, 2) as $argument) {
+    if (str_starts_with($argument, '--')) {
+        [$key, $value] = array_pad(explode('=', substr($argument, 2), 2), 2, '1');
+        $options[$key] = $value;
+    }
+}
+
+$logger = new Logger($options['log-level'] ?? getenv('DEPMAN_LOG_LEVEL') ?: 'info');
+
+switch ($command) {
+    case 'report':
+        $client = new Client($logger, new Resolver($logger), new Reporter($logger));
+        $result = $client->report($root, 'manual');
+
+        echo match ($result->status) {
+            'reported' => sprintf("Reported %d packages.%s\n", $result->packages,
+                $result->deduplicated ? ' (unchanged since the last report)' : ''),
+            'spooled' => sprintf("Could not reach DepMan (%s); spooled for later.\n", $result->detail),
+            'failed' => sprintf("Report rejected: %s\n", $result->detail),
+            default => sprintf("Skipped: %s\n", $result->detail),
+        };
+
+        // Only an explicit --fail-on-error, or the config equivalent, makes a
+        // failure exit non-zero. Everything else exits 0 by design.
+        $failOnError = isset($options['fail-on-error'])
+            || (Config::load($root, $logger)?->failOnError() ?? false);
+
+        exit($result->isFailure() && $failOnError ? 1 : 0);
+
+    case 'doctor':
+        $config = Config::load($root, $logger);
+
+        if ($config === null) {
+            echo "No depman.json found in {$root}.\n";
+            exit(0);
+        }
+
+        $endpoint = $config->endpoint();
+        $environment = $config->environment();
+        $token = Token::find($endpoint, []);
+
+        printf("Project:      %s\n", $config->project() ?? '(not set)');
+        printf("Endpoint:     %s\n", $endpoint);
+        printf("Environment:  %s (from %s)\n", $environment['name'], $environment['resolvedFrom']);
+        printf("Token:        %s\n", $token === null ? 'not found — set DEPMAN_TOKEN' : 'found');
+        printf("Include dev:  %s\n", $config->includeDev() ? 'yes' : 'no');
+        exit(0);
+
+    case 'install-hook':
+        $path = rtrim($root, '/').'/composer.json';
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        if (! is_array($decoded)) {
+            echo "Could not read composer.json.\n";
+            exit(1);
+        }
+
+        foreach (['post-install-cmd', 'post-update-cmd'] as $hook) {
+            $existing = (array) ($decoded['scripts'][$hook] ?? []);
+
+            if (! in_array(ScriptHandler::class.'::report', $existing, true)) {
+                $existing[] = ScriptHandler::class.'::report';
+            }
+
+            $decoded['scripts'][$hook] = $existing;
+        }
+
+        file_put_contents($path, json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+        echo "Added the DepMan hook to post-install-cmd and post-update-cmd.\n";
+        exit(0);
+
+    default:
+        echo <<<'TEXT'
+        depman — report installed Composer dependencies to DepMan
+
+          depman report [--fail-on-error]   Report the installed tree now
+          depman doctor                     Show the resolved configuration
+          depman install-hook               Add the post-install hook to composer.json
+
+        The token is read from DEPMAN_TOKEN, DEPMAN_TOKEN_FILE, or
+        ~/.depman/credentials. It must never be placed in depman.json, which is
+        committed to source control.
+
+        TEXT;
+        exit(0);
+}
