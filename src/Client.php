@@ -46,15 +46,19 @@ final class Client
         }
 
         $endpoint = $config->endpoint($env);
-        $token = Token::find($endpoint, $env);
+        $found = Token::locate($endpoint, $env, $projectRoot);
 
-        if ($token === null) {
+        if ($found === null) {
             // The normal state for an open-source contributor who just cloned
             // the repository. It must be harmless and near-silent.
-            $this->logger->info('no token found, skipping. Set DEPMAN_TOKEN to report.');
+            $this->logger->info('no token found, skipping. Set DEPMAN_TOKEN in .env or the environment to report.');
 
             return Result::skipped('no token');
         }
+
+        // The source, never the value.
+        $this->logger->debug('token found via '.$found->source.'.');
+        $token = $found->value;
 
         $packages = $this->resolver->resolve($projectRoot, $config->includeDev($env));
 

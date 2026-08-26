@@ -80,12 +80,17 @@ switch ($command) {
 
         $endpoint = $config->endpoint();
         $environment = $config->environment();
-        $token = Token::find($endpoint, []);
+        $token = Token::locate($endpoint, [], $root);
 
         printf("Project:      %s\n", $config->project() ?? '(not set)');
         printf("Endpoint:     %s\n", $endpoint);
         printf("Environment:  %s (from %s)\n", $environment['name'], $environment['resolvedFrom']);
-        printf("Token:        %s\n", $token === null ? 'not found — set DEPMAN_TOKEN' : 'found');
+        // The source, not just "found". When the wrong mechanism wins, the
+        // symptom is a 401 with no clue which of four places produced the
+        // credential — and this line is the answer.
+        printf("Token:        %s\n", $token === null
+            ? 'not found — set DEPMAN_TOKEN in .env or the environment'
+            : 'found via '.$token->source);
         printf("Include dev:  %s\n", $config->includeDev() ? 'yes' : 'no');
         exit(0);
 
