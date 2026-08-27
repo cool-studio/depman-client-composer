@@ -1,0 +1,14 @@
+# The client's own analysis. It shares nothing with the application's config on
+# purpose: a client must be checkable by somebody who has only cloned the
+# client, and the next two are not written in PHP at all.
+parameters:
+    level: 6
+
+    tmpDir: .phpstan
+
+    paths:
+        - src
+        - tests
+
+    # No baseline, same reasoning as the application: at this size there is
+    # nothing worth baselining, and a baseline lets errors accumulate unseen.
