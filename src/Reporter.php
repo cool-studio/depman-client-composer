@@ -22,7 +22,15 @@ class Reporter
 
     public const CLIENT_NAME = 'depman/client';
 
-    public const CLIENT_VERSION = '1.0.0';
+    /**
+     * The client's own release version, sent in the payload and the User-Agent.
+     *
+     * **Bump this in the commit that gets tagged**, not afterwards: it is the
+     * only thing that tells support which build produced a report, and a
+     * constant that lags the tag makes every report lie about itself. See the
+     * client release checklist in docs/release-checklist.md.
+     */
+    public const CLIENT_VERSION = '0.1.1';
 
     public function __construct(private readonly Logger $logger) {}
 
