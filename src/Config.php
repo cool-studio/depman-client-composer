@@ -75,17 +75,27 @@ final class Config
         }
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function isEnabled(array $env = []): bool
     {
-        $override = $env['DEPMAN_ENABLED'] ?? getenv('DEPMAN_ENABLED');
+        // Via fromEnv() like every other getter. It used to read $env and
+        // getenv() by hand and then test the result against null, which a
+        // string|false can never be — dead code that static analysis would
+        // have caught had it ever been pointed at this package.
+        $override = $this->fromEnv('DEPMAN_ENABLED', $env);
 
-        if ($override !== false && $override !== null && $override !== '') {
-            return !in_array(strtolower((string) $override), ['0', 'false', 'no', 'off'], true);
+        if ($override !== null) {
+            return !in_array(strtolower($override), ['0', 'false', 'no', 'off'], true);
         }
 
         return (bool) ($this->raw['enabled'] ?? true);
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function endpoint(array $env = []): string
     {
         $endpoint = $this->fromEnv('DEPMAN_ENDPOINT', $env)
@@ -94,6 +104,9 @@ final class Config
         return rtrim($endpoint, '/');
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function project(array $env = []): ?string
     {
         $project = $this->fromEnv('DEPMAN_PROJECT', $env) ?? ($this->raw['project'] ?? null);
@@ -156,6 +169,9 @@ final class Config
         return (string) $mapped;
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function includeDev(array $env = []): bool
     {
         $override = $this->fromEnv('DEPMAN_INCLUDE_DEV', $env);
@@ -167,6 +183,9 @@ final class Config
         return (bool) ($this->raw['include']['dev'] ?? true);
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function failOnError(array $env = []): bool
     {
         $override = $this->fromEnv('DEPMAN_FAIL_ON_ERROR', $env);
@@ -178,6 +197,9 @@ final class Config
         return (bool) ($this->raw['failOnError'] ?? false);
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function timeoutMs(array $env = []): int
     {
         $override = $this->fromEnv('DEPMAN_TIMEOUT_MS', $env);
@@ -186,6 +208,9 @@ final class Config
         return max(1000, min($value, 60000));
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function logLevel(array $env = []): string
     {
         return $this->fromEnv('DEPMAN_LOG_LEVEL', $env) ?? (string) ($this->raw['logLevel'] ?? 'warn');
@@ -201,6 +226,9 @@ final class Config
         return (string) ($this->raw['manifest']['path'] ?? '.');
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function spoolDirectory(array $env = []): string
     {
         $dir = $this->fromEnv('DEPMAN_SPOOL_DIR', $env)
@@ -209,6 +237,9 @@ final class Config
         return rtrim($this->projectRoot, '/').'/'.ltrim($dir, '/');
     }
 
+    /**
+     * @param  array<string, string>  $env
+     */
     public function offlineMode(array $env = []): string
     {
         $mode = $this->fromEnv('DEPMAN_OFFLINE_MODE', $env)

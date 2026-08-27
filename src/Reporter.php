@@ -8,8 +8,15 @@ namespace Depman\Client;
  * Zero runtime dependencies by design — this package installs into everyone
  * else's dependency tree, so it uses curl when available and a stream context
  * otherwise, and nothing else.
+ *
+ * **Not final, so that `send()` can be overridden in tests.** It is the only
+ * class here that touches the network, which makes it the seam the orchestrator
+ * has to be tested through — every branch in Client::interpret() is a response
+ * status, and reaching them for real would mean a live server per case. The
+ * client specification requires this seam of every client; see
+ * docs/ingest-clients.md.
  */
-final class Reporter
+class Reporter
 {
     public const WIRE_VERSION = 1;
 
@@ -161,7 +168,24 @@ final class Reporter
 
         $status = 0;
 
-        foreach ($http_response_header ?? [] as $header) {
+        // PHP 8.5 deprecated the magic local $http_response_header in favour of
+        // http_get_last_response_headers(). This package supports 8.1, where
+        // that function does not exist, so both spellings have to stay — and
+        // the ternary is what keeps the deprecated one from being evaluated at
+        // all on the runtimes that warn about it.
+        if (function_exists('http_get_last_response_headers')) {
+            $headers = http_get_last_response_headers() ?? [];
+        } else {
+            // Reached only on PHP < 8.5, and read through get_defined_vars()
+            // rather than by name on purpose: 8.5 deprecated the magic local
+            // $http_response_header, and it emits that deprecation when the
+            // file is COMPILED, not when the branch runs — so spelling the
+            // variable out here would warn on every 8.5 host even though this
+            // line can never execute on one.
+            $headers = get_defined_vars()['http_response_header'];
+        }
+
+        foreach ($headers as $header) {
             if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $matches) === 1) {
                 $status = (int) $matches[1];
             }

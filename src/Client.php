@@ -116,7 +116,7 @@ final class Client
             return $this->handleUndelivered($config, $payload, $env, 'rate limited');
         }
 
-        if ($status >= 500 || $status === 503) {
+        if ($status >= 500) {
             return $this->handleUndelivered($config, $payload, $env, 'DepMan is unavailable');
         }
 
