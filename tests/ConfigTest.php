@@ -15,6 +15,9 @@ class ConfigTest extends TestCase
     /** @var array<int, string> */
     private array $putenv = [];
 
+    /** @var array<int, string> */
+    private array $cleanup = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -29,6 +32,17 @@ class ConfigTest extends TestCase
 
         $this->putenv = [];
 
+        foreach ($this->cleanup as $path) {
+            foreach (glob($path.'/*') ?: [] as $file) {
+                @unlink($file);
+            }
+
+            @unlink($path.'/.env');
+            @rmdir($path);
+        }
+
+        $this->cleanup = [];
+
         parent::tearDown();
     }
 
@@ -39,6 +53,158 @@ class ConfigTest extends TestCase
     {
         $this->putenv[] = $key;
         putenv($key.'='.$value);
+    }
+
+    /**
+     * A throwaway project directory, optionally with a `.env` in it.
+     */
+    private function project(?string $dotEnv = null): string
+    {
+        $path = sys_get_temp_dir().'/depman-'.bin2hex(random_bytes(4));
+        mkdir($path);
+        $this->cleanup[] = $path;
+
+        if ($dotEnv !== null) {
+            file_put_contents($path.'/.env', $dotEnv);
+        }
+
+        return $path;
+    }
+
+    /**
+     * @param  array<string, mixed>  $raw
+     */
+    private function configIn(string $projectRoot, array $raw = []): Config
+    {
+        return Config::fromArray($projectRoot, $raw, $this->logger());
+    }
+
+    public function test_every_setting_is_read_from_dot_env(): void
+    {
+        // The hook fires during `composer install`, before the consumer's
+        // framework has booted, so nothing has loaded `.env` into the process
+        // environment. Until step 21 only DEPMAN_TOKEN was read from there and
+        // every other setting beside it was silently ignored.
+        $config = $this->configIn($this->project(<<<'ENV'
+            DEPMAN_ENDPOINT=https://depman.acme.test
+            DEPMAN_PROJECT=storefront
+            DEPMAN_ENV=staging
+            DEPMAN_TIMEOUT_MS=25000
+            DEPMAN_LOG_LEVEL=debug
+            DEPMAN_INCLUDE_DEV=false
+            DEPMAN_FAIL_ON_ERROR=true
+            DEPMAN_OFFLINE_MODE=skip
+            DEPMAN_SPOOL_DIR=.cache/depman
+            ENV));
+
+        $this->assertSame('https://depman.acme.test', $config->endpoint());
+        $this->assertSame('storefront', $config->project());
+        $this->assertSame('staging', $config->environment()['name']);
+        $this->assertSame('DEPMAN_ENV', $config->environment()['resolvedFrom']);
+        $this->assertSame(25000, $config->timeoutMs());
+        $this->assertSame('debug', $config->logLevel());
+        $this->assertFalse($config->includeDev());
+        $this->assertTrue($config->failOnError());
+        $this->assertSame('skip', $config->offlineMode());
+        $this->assertStringEndsWith('/.cache/depman', $config->spoolDirectory());
+    }
+
+    public function test_dot_env_wins_over_the_process_environment(): void
+    {
+        // The same precedence the token has had since step 08. One answer to
+        // "where does the client look?", not one per setting.
+        $config = $this->configIn($this->project('DEPMAN_ENDPOINT=https://from-dot-env.test
+'));
+
+        $this->assertSame(
+            'https://from-dot-env.test',
+            $config->endpoint(['DEPMAN_ENDPOINT' => 'https://from-process.test']),
+        );
+    }
+
+    public function test_the_process_environment_still_wins_over_depman_json(): void
+    {
+        // No .env at all: the documented precedence below it is unchanged.
+        $config = $this->configIn($this->project(), ['endpoint' => 'https://from-json.test']);
+
+        $this->assertSame(
+            'https://from-process.test',
+            $config->endpoint(['DEPMAN_ENDPOINT' => 'https://from-process.test']),
+        );
+        $this->assertSame('https://from-json.test', $config->endpoint());
+    }
+
+    public function test_an_empty_value_in_dot_env_falls_through_rather_than_blanking_the_setting(): void
+    {
+        $config = $this->configIn($this->project('DEPMAN_ENDPOINT=
+'), ['endpoint' => 'https://from-json.test']);
+
+        $this->assertSame('https://from-json.test', $config->endpoint());
+    }
+
+    public function test_app_env_is_read_from_dot_env(): void
+    {
+        // The bug this is really about. APP_ENV is the default second source
+        // and it lives in .env, so before this every Laravel consumer reported
+        // `local` no matter what they were actually running.
+        $config = $this->configIn($this->project('APP_ENV=production
+'));
+
+        $this->assertSame(
+            ['name' => 'production', 'resolvedFrom' => 'APP_ENV'],
+            $config->environment(),
+        );
+    }
+
+    public function test_environment_from_cannot_pull_an_arbitrary_secret_out_of_dot_env(): void
+    {
+        // `environment.from` is an arbitrary list of variable names in a
+        // COMMITTED file, and its value is sent to the server as the
+        // environment name. Without an allowlist, a one-line change to
+        // depman.json exfiltrates whatever it points at.
+        $root = $this->project('DB_PASSWORD=hunter2
+APP_ENV=staging
+');
+
+        $config = $this->configIn($root, ['environment' => ['from' => ['DB_PASSWORD', 'APP_ENV']]]);
+
+        $resolved = $config->environment();
+
+        $this->assertSame('staging', $resolved['name']);
+        $this->assertSame('APP_ENV', $resolved['resolvedFrom']);
+        $this->assertStringNotContainsString('hunter2', json_encode($resolved) ?: '');
+    }
+
+    public function test_a_non_allowlisted_variable_is_still_read_from_the_process_environment(): void
+    {
+        // The allowlist bounds what may be read out of the SECRET STORE. It is
+        // not a restriction on the process environment, which the consumer sets
+        // deliberately and which carries no such concentration of secrets.
+        $config = $this->configIn($this->project(), ['environment' => ['from' => ['MY_OWN_ENV']]]);
+
+        $this->assertSame(
+            ['name' => 'staging', 'resolvedFrom' => 'MY_OWN_ENV'],
+            $config->environment(['MY_OWN_ENV' => 'staging']),
+        );
+    }
+
+    public function test_it_reports_where_a_setting_came_from(): void
+    {
+        // doctor prints this. With .env shadowing the process environment for
+        // every setting, "I exported the right endpoint and it is still wrong"
+        // has three possible answers and this is the one line that separates
+        // them.
+        $config = $this->configIn($this->project("DEPMAN_ENDPOINT=https://from-dot-env.test\n"), [
+            'project' => 'storefront',
+        ]);
+
+        $this->assertSame('.env', $config->sourceOf('endpoint', 'DEPMAN_ENDPOINT'));
+        $this->assertSame('depman.json', $config->sourceOf('project', 'DEPMAN_PROJECT'));
+        $this->assertSame(
+            'DEPMAN_PROJECT',
+            $config->sourceOf('project', 'DEPMAN_PROJECT', ['DEPMAN_PROJECT' => 'other']),
+        );
+        $this->assertSame('the default', $config->sourceOf('timeoutMs', 'DEPMAN_TIMEOUT_MS'));
     }
 
     private function logger(string $level = 'debug'): Logger

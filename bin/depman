@@ -82,8 +82,11 @@ switch ($command) {
         $environment = $config->environment();
         $token = Token::locate($endpoint, [], $root);
 
-        printf("Project:      %s\n", $config->project() ?? '(not set)');
-        printf("Endpoint:     %s\n", $endpoint);
+        // The source on every line, not just the token's. A `.env` shadows a
+        // process env var for every setting, so "which of these three won?" is
+        // the question doctor exists to answer.
+        printf("Project:      %s (from %s)\n", $config->project() ?? '(not set)', $config->sourceOf('project', 'DEPMAN_PROJECT'));
+        printf("Endpoint:     %s (from %s)\n", $endpoint, $config->sourceOf('endpoint', 'DEPMAN_ENDPOINT'));
         printf("Environment:  %s (from %s)\n", $environment['name'], $environment['resolvedFrom']);
         // The source, not just "found". When the wrong mechanism wins, the
         // symptom is a 401 with no clue which of four places produced the

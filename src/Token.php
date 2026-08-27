@@ -9,7 +9,7 @@ namespace Depman\Client;
  *
  *   1. `DEPMAN_TOKEN` in the project's `.env`
  *   2. `DEPMAN_TOKEN` in the process environment
- *   3. `DEPMAN_TOKEN_FILE`, from either, pointing at a file
+ *   3. `DEPMAN_TOKEN_FILE`, from `.env` then the process environment
  *   4. `~/.depman/credentials`, keyed by endpoint host
  *
  * **`.env` comes first because of when this runs.** The hook fires during
@@ -24,6 +24,9 @@ namespace Depman\Client;
  * The remaining order is unchanged: the process environment for CI, then a
  * file for Docker and Kubernetes secret mounts (which keeps the value out of
  * `ps` output and crash dumps), then a per-host credentials file.
+ *
+ * `Config` reads every other `DEPMAN_` setting the same way round, so there is
+ * one answer to "where does the client look?" rather than one per setting.
  */
 final class Token
 {
@@ -72,22 +75,21 @@ final class Token
     }
 
     /**
-     * `DEPMAN_TOKEN_FILE` from the process environment, then from `.env`.
+     * `DEPMAN_TOKEN_FILE` from `.env`, then from the process environment.
      *
-     * Both sources, in the same order as the token itself, so the two
-     * mechanisms do not disagree about where they look.
+     * Both sources, in the same order as the token itself and as every other
+     * setting in `Config`, so the mechanisms do not disagree about where they
+     * look. This read them the other way round and its own docblock claimed
+     * otherwise — harmless while `.env` was the only place either was set, and
+     * a genuine surprise as soon as both were.
      *
      * @param  array<string, string>  $env
      */
     private static function tokenFilePath(array $env, ?string $projectRoot): ?string
     {
-        $file = self::env('DEPMAN_TOKEN_FILE', $env);
+        $fromDotEnv = $projectRoot === null ? null : DotEnv::get($projectRoot, 'DEPMAN_TOKEN_FILE');
 
-        if ($file !== null) {
-            return $file;
-        }
-
-        return $projectRoot === null ? null : DotEnv::get($projectRoot, 'DEPMAN_TOKEN_FILE');
+        return $fromDotEnv ?? self::env('DEPMAN_TOKEN_FILE', $env);
     }
 
     /**

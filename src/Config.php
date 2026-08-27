@@ -5,7 +5,15 @@ namespace Depman\Client;
 /**
  * The depman.json contract, as loaded from a consumer project.
  *
- * Precedence for every setting is: process env var > depman.json > default.
+ * Precedence for every setting is: **project `.env` > process env var >
+ * depman.json > default.**
+ *
+ * `.env` comes first for the same reason it does for the token: the hook fires
+ * during `composer install`, when the consumer's framework has not booted and
+ * nothing has loaded `.env` into the process environment. Until this was
+ * extended past `DEPMAN_TOKEN`, a developer who put `DEPMAN_ENDPOINT` or
+ * `DEPMAN_ENV` beside their token — the only sensible place — had it silently
+ * ignored, and the two mechanisms disagreed about where they looked.
  *
  * depman.json is committed to source control, so it must never contain a
  * credential. A `token` key is refused loudly rather than silently honoured.
@@ -13,6 +21,41 @@ namespace Depman\Client;
 final class Config
 {
     private const TOKEN_KEYS = ['token', 'apiToken', 'api_token', 'secret'];
+
+    /**
+     * Non-`DEPMAN_` variables this class may read out of a consumer's `.env`.
+     *
+     * `environment.from` names arbitrary variables and comes from depman.json,
+     * which is committed and reviewed far less carefully than code. Without
+     * this list, a one-line change to that array — `["DB_PASSWORD"]` — would
+     * read a secret out of the densest secret store in the project and ship it
+     * to the server as an environment name. A `DEPMAN_`-prefixed key is the
+     * consumer's own namespace and needs no allowlist; anything else does.
+     *
+     * These are the variables that name an environment and nothing else. They
+     * cover the documented default list plus the two other frameworks that use
+     * the same convention.
+     */
+    private const DOTENV_READABLE = [
+        'APP_ENV',
+        'NODE_ENV',
+        'ENVIRONMENT',
+        'CI_ENVIRONMENT_NAME',
+        'RAILS_ENV',
+        'SYMFONY_ENV',
+    ];
+
+    /**
+     * Memoised `.env` lookups, per key.
+     *
+     * `environment()` walks up to five source variables, and re-reading the
+     * file once per source turns one hook into five file scans for no reason.
+     * Caching the *result* rather than the parsed file keeps DotEnv's promise
+     * that only the requested key ever leaves it.
+     *
+     * @var array<string, string|null>
+     */
+    private array $dotEnvCache = [];
 
     /**
      * @param  array<string, mixed>  $raw
@@ -249,10 +292,42 @@ final class Config
     }
 
     /**
+     * Where a setting's value came from, for `doctor`.
+     *
+     * Worth printing now that `.env` shadows the process environment for every
+     * setting and not just the token: "the endpoint is wrong and I have
+     * exported the right one" has three possible answers, and without this line
+     * the first support ticket is unanswerable. `resolvedFrom` already does the
+     * same job for the environment and `FoundToken::$source` for the token.
+     *
+     * @param  array<string, string>  $env
+     */
+    public function sourceOf(string $key, string $envKey, array $env = []): string
+    {
+        if ($this->fromDotEnv($envKey) !== null) {
+            return '.env';
+        }
+
+        if (array_key_exists($envKey, $env) ? $env[$envKey] !== '' : (($v = getenv($envKey)) !== false && $v !== '')) {
+            return $envKey;
+        }
+
+        return array_key_exists($key, $this->raw) ? 'depman.json' : 'the default';
+    }
+
+    /**
+     * One setting, from `.env` first and then the process environment.
+     *
      * @param  array<string, string>  $env
      */
     private function fromEnv(string $key, array $env): ?string
     {
+        $fromDotEnv = $this->fromDotEnv($key);
+
+        if ($fromDotEnv !== null) {
+            return $fromDotEnv;
+        }
+
         if (array_key_exists($key, $env)) {
             return $env[$key] === '' ? null : $env[$key];
         }
@@ -260,6 +335,22 @@ final class Config
         $value = getenv($key);
 
         return ($value === false || $value === '') ? null : $value;
+    }
+
+    /**
+     * The project's `.env`, for keys this class is allowed to read.
+     */
+    private function fromDotEnv(string $key): ?string
+    {
+        if (!str_starts_with($key, 'DEPMAN_') && !in_array($key, self::DOTENV_READABLE, true)) {
+            return null;
+        }
+
+        if (!array_key_exists($key, $this->dotEnvCache)) {
+            $this->dotEnvCache[$key] = DotEnv::get($this->projectRoot, $key);
+        }
+
+        return $this->dotEnvCache[$key];
     }
 
     private function normalise(string $value): string
