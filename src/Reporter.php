@@ -135,7 +135,12 @@ class Reporter
         $response = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
         $error = curl_error($handle);
-        curl_close($handle);
+
+        // No curl_close(). Since PHP 8.0 the handle is an object freed by the
+        // garbage collector, and calling it is deprecated in 8.5 — which the
+        // client printed on every `composer install`, from inside a tool whose
+        // entire job is to be invisible during one.
+        unset($handle);
 
         if ($response === false || $status === 0) {
             $this->logger->debug('transport failure: '.$error);
