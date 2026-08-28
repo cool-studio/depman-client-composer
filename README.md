@@ -13,6 +13,12 @@ environments is running a vulnerable version.
 It runs from your `post-install-cmd` hook, so the inventory stays true without anyone remembering
 to update it.
 
+Each transitive package is reported with the route back to the dependency **you** declared, so an
+advisory against something you have never heard of still names the line in your `composer.json`
+that pulls it in. The routes come from `vendor/composer/installed.json` — what the installer
+actually wrote, not what the lockfile intended — and where they cannot be worked out the client
+sends nothing rather than a guess.
+
 ## It will not break your build
 
 That is the rule the rest of the design follows from. The hook catches every throwable and returns
