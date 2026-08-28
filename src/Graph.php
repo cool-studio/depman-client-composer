@@ -15,6 +15,12 @@ namespace Depman\Client;
  * starts at the root manifest's own requirements and proceeds breadth-first.
  * The first layer is depth 0, and a package's ancestry chain begins with the
  * direct dependency the reader can actually edit.
+ *
+ * It also carries each package's `type`, which installed.php does not have.
+ * A composer/installers type — `wordpress-core`, `wordpress-plugin` — says the
+ * package is a shim for software that is not a Composer library, which is the
+ * strongest cheap signal there is that DepMan's advisory coverage of it is
+ * partial. Read-only and best-effort, exactly like the edges.
  */
 final class Graph
 {
@@ -37,11 +43,27 @@ final class Graph
     /**
      * @param  array<string, list<string>>  $requires  Package name => the names it requires.
      * @param  array<string, string>  $aliases  A replaced or provided name => the package supplying it.
+     * @param  array<string, string>  $types  Package name => its composer `type`.
      */
     private function __construct(
         private readonly array $requires,
         private readonly array $aliases,
+        private readonly array $types,
     ) {}
+
+    /**
+     * Each package's composer `type`, keyed by lowercased name.
+     *
+     * `library` is omitted: it is composer's default, it is the overwhelming
+     * majority of every tree, and reporting it would add a field to nearly every
+     * package entry on the wire to say nothing at all.
+     *
+     * @return array<string, string>
+     */
+    public function types(): array
+    {
+        return $this->types;
+    }
 
     /**
      * Null when the file is missing or unreadable — the caller reports without
@@ -50,7 +72,7 @@ final class Graph
     public static function read(string $path, Logger $logger): ?self
     {
         if (!is_file($path)) {
-            $logger->debug('vendor/composer/installed.json not found; reporting without dependency paths.');
+            $logger->debug('vendor/composer/installed.json not found; reporting without dependency paths or types.');
 
             return null;
         }
@@ -58,13 +80,14 @@ final class Graph
         $decoded = json_decode((string) file_get_contents($path), true);
 
         if (!is_array($decoded) || !is_array($decoded['packages'] ?? null)) {
-            $logger->debug('vendor/composer/installed.json has an unexpected shape; reporting without dependency paths.');
+            $logger->debug('vendor/composer/installed.json has an unexpected shape; reporting without dependency paths or types.');
 
             return null;
         }
 
         $requires = [];
         $aliases = [];
+        $types = [];
 
         foreach ($decoded['packages'] as $package) {
             if (!is_array($package) || !is_string($package['name'] ?? null)) {
@@ -72,6 +95,12 @@ final class Graph
             }
 
             $name = strtolower($package['name']);
+
+            $type = $package['type'] ?? null;
+
+            if (is_string($type) && $type !== '' && $type !== 'library') {
+                $types[$name] = $type;
+            }
 
             // `require` only. A dependency's own require-dev is not installed,
             // and walking it would invent edges that are not on disk.
@@ -90,8 +119,9 @@ final class Graph
 
         ksort($requires);
         ksort($aliases);
+        ksort($types);
 
-        return new self($requires, $aliases);
+        return new self($requires, $aliases, $types);
     }
 
     /**

@@ -47,6 +47,66 @@ class GraphTest extends TestCase
         return $graph->attribute($roots);
     }
 
+    /**
+     * @return array<string, string>
+     */
+    private function types(): array
+    {
+        $graph = Graph::read($this->path, new Logger('silent', fopen('php://memory', 'rw+')));
+
+        $this->assertNotNull($graph);
+
+        return $graph->types();
+    }
+
+    public function test_it_reads_a_composer_installers_type(): void
+    {
+        $this->seed([
+            ['name' => 'roots/wordpress-no-content', 'type' => 'wordpress-core', 'require' => []],
+        ]);
+
+        // The signal that a Composer package is a shim for software that is not
+        // a Composer library, and therefore that our advisory coverage of it is
+        // partial at best.
+        $this->assertSame(['roots/wordpress-no-content' => 'wordpress-core'], $this->types());
+    }
+
+    public function test_the_library_default_is_not_reported(): void
+    {
+        $this->seed([
+            ['name' => 'laravel/framework', 'type' => 'library', 'require' => []],
+            ['name' => 'psr/log', 'require' => []],
+        ]);
+
+        // `library` is composer's default and nearly every package in every
+        // tree. Reporting it would add a field to a thousand package entries to
+        // say nothing at all.
+        $this->assertSame([], $this->types());
+    }
+
+    public function test_a_type_that_is_not_a_string_is_ignored_rather_than_fatal(): void
+    {
+        $this->seed([
+            ['name' => 'acme/odd', 'type' => ['not', 'a', 'string'], 'require' => []],
+            ['name' => 'acme/blank', 'type' => '', 'require' => []],
+        ]);
+
+        // installed.json is somebody else's file. A shape we do not expect costs
+        // the signal for that package and nothing else.
+        $this->assertSame([], $this->types());
+    }
+
+    public function test_types_are_keyed_lowercase_to_match_attribution(): void
+    {
+        $this->seed([
+            ['name' => 'Roots/WordPress-No-Content', 'type' => 'wordpress-core', 'require' => []],
+        ]);
+
+        // Packagist names are case-insensitive and the resolver looks types up
+        // by strtolower($name), exactly as it does the attribution map.
+        $this->assertArrayHasKey('roots/wordpress-no-content', $this->types());
+    }
+
     public function test_a_direct_dependency_is_depth_zero_with_no_ancestry(): void
     {
         $this->seed([['name' => 'laravel/framework', 'require' => []]]);

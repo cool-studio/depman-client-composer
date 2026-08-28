@@ -18,9 +18,10 @@ namespace Depman\Client;
  *
  * Attribution — the depth and the ancestry chains that answer "which of my
  * dependencies pulled this in?" — needs edges, which installed.php does not
- * carry either. Those come from installed.json next to it; see Graph. It is
- * read for edges only, so a package the graph cannot place keeps the package
- * set, the version and the scope it has always had, and simply reports no path.
+ * carry either. Those come from installed.json next to it; see Graph, which
+ * also supplies each package's composer `type`. It is read for those two
+ * things only, so a package the graph cannot place keeps the package set, the
+ * version and the scope it has always had, and simply reports neither.
  */
 final class Resolver
 {
@@ -53,6 +54,7 @@ final class Resolver
 
         $graph = Graph::read(rtrim($projectRoot, '/').'/vendor/composer/installed.json', $this->logger);
         $attribution = $graph?->attribute(array_keys($direct)) ?? [];
+        $types = $graph?->types() ?? [];
 
         $packages = [];
         $purls = [];
@@ -83,6 +85,7 @@ final class Resolver
 
             $isDirect = isset($direct[$name]);
             $node = $attribution[strtolower($name)] ?? null;
+            $type = $types[strtolower($name)] ?? null;
 
             $packages[] = [
                 'purl' => $this->purl($name, $version),
@@ -95,6 +98,14 @@ final class Resolver
                 'depth' => $node['depth'] ?? ($isDirect ? 0 : 1),
                 'requestedConstraint' => $direct[$name] ?? null,
             ];
+
+            // Omitted entirely for a plain library, which is nearly every
+            // package: a key repeated across a 1 000-package tree to say
+            // "nothing unusual" is payload weight with no reader. Graph already
+            // drops composer's `library` default for the same reason.
+            if ($type !== null) {
+                $packages[count($packages) - 1]['type'] = $type;
+            }
 
             $index = count($packages) - 1;
             $purls[strtolower($name)] = $packages[$index]['purl'];

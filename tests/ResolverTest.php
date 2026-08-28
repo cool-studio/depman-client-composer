@@ -159,6 +159,39 @@ class ResolverTest extends TestCase
         $this->assertCount(1, $this->resolve());
     }
 
+    public function test_it_reports_a_composer_installers_type(): void
+    {
+        $this->seed(
+            ['versions' => ['roots/wordpress-no-content' => ['pretty_version' => '6.8.2']]],
+            ['require' => ['roots/wordpress-no-content' => '^6.8']],
+            [['name' => 'roots/wordpress-no-content', 'type' => 'wordpress-core', 'require' => []]],
+        );
+
+        $this->assertSame('wordpress-core', $this->resolve()[0]['type']);
+    }
+
+    public function test_a_plain_library_carries_no_type_key_at_all(): void
+    {
+        $this->seed(
+            ['versions' => ['laravel/framework' => ['pretty_version' => '11.2.0']]],
+            ['require' => ['laravel/framework' => '^11.0']],
+            [['name' => 'laravel/framework', 'type' => 'library', 'require' => []]],
+        );
+
+        // Not `'type' => null`. A key present on every entry of a 1 000-package
+        // tree to say "nothing unusual" is payload weight with no reader.
+        $this->assertArrayNotHasKey('type', $this->resolve()[0]);
+    }
+
+    public function test_without_installed_json_packages_carry_no_type(): void
+    {
+        $this->seed(['versions' => ['laravel/framework' => ['pretty_version' => '11.2.0']]]);
+
+        // Degrading to the honest gap, exactly as attribution does: the package
+        // set, version and scope are unchanged, and the signal is simply absent.
+        $this->assertArrayNotHasKey('type', $this->resolve()[0]);
+    }
+
     public function test_packages_are_sorted_deterministically(): void
     {
         // The manifest digest depends on ordering being stable.
