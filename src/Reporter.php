@@ -30,7 +30,7 @@ class Reporter
      * constant that lags the tag makes every report lie about itself. See the
      * client release checklist in docs/release-checklist.md.
      */
-    public const CLIENT_VERSION = '0.1.2';
+    public const CLIENT_VERSION = '0.1.3';
 
     public function __construct(private readonly Logger $logger) {}
 

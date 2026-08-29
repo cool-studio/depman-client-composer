@@ -142,7 +142,7 @@ final class Config
     public function endpoint(array $env = []): string
     {
         $endpoint = $this->fromEnv('DEPMAN_ENDPOINT', $env)
-            ?? (string) ($this->raw['endpoint'] ?? 'https://api.depman.io');
+            ?? (string) ($this->raw['endpoint'] ?? 'https://depman.io');
 
         return rtrim($endpoint, '/');
     }

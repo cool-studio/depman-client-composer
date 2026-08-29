@@ -122,6 +122,16 @@ class ConfigTest extends TestCase
         );
     }
 
+    public function test_the_built_in_endpoint_default_is_the_platform_host(): void
+    {
+        // Nothing configures the endpoint at all — no .env, no depman.json key.
+        // The fallback is the host the platform is actually served from, and it
+        // is the apex domain: there is no `api.` subdomain. This shipped wrong
+        // once, which is cheap to do and invisible until somebody's reports
+        // vanish into DNS that does not resolve.
+        $this->assertSame('https://depman.io', $this->configIn($this->project())->endpoint());
+    }
+
     public function test_the_process_environment_still_wins_over_depman_json(): void
     {
         // No .env at all: the documented precedence below it is unchanged.
