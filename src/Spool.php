@@ -51,6 +51,29 @@ final class Spool
         return $files;
     }
 
+    /**
+     * One spooled payload, or null when the file cannot be read as one.
+     *
+     * A truncated write — the disk filled, or the build was killed mid-install —
+     * leaves a file that will never decode. The caller discards those rather
+     * than retrying them forever: at a 20-file cap, a payload that can never
+     * leave is a slot that evicts good ones.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function read(string $file): ?array
+    {
+        $contents = @file_get_contents($file);
+
+        if ($contents === false) {
+            return null;
+        }
+
+        $decoded = json_decode($contents, true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
     public function forget(string $file): void
     {
         @unlink($file);

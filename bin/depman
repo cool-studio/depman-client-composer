@@ -5,9 +5,13 @@ declare(strict_types=1);
 
 use Depman\Client\Client;
 use Depman\Client\Config;
+use Depman\Client\Gate;
+use Depman\Client\GateResult;
 use Depman\Client\Logger;
+use Depman\Client\Pusher;
 use Depman\Client\Reporter;
 use Depman\Client\Resolver;
+use Depman\Client\Result;
 use Depman\Client\ScriptHandler;
 use Depman\Client\Token;
 
@@ -50,6 +54,42 @@ foreach (array_slice($argv, 2) as $argument) {
 
 $logger = new Logger($options['log-level'] ?? getenv('DEPMAN_LOG_LEVEL') ?: 'info');
 
+/**
+ * `report --wait [--fail-on=<severity>]`, printed and turned into an exit code.
+ *
+ * Everything that decides anything is in Gate; this only formats. See
+ * docs/ingest-clients.md §10.
+ *
+ * @param  array<string, string>  $options
+ */
+function depman_gate(string $root, Logger $logger, array $options, Result $result): int
+{
+    $threshold = isset($options['fail-on']) ? strtolower($options['fail-on']) : null;
+
+    // Clamped rather than honoured, exactly as the request timeout is: an
+    // absurd value here is a typo, and a gate that waits for an hour has
+    // stopped being a gate and become a hung build.
+    $timeout = max(10, min((int) ($options['wait-timeout'] ?? 300), 3600));
+
+    $verdict = (new Gate($logger, new Reporter($logger)))->run($root, $result, $threshold, $timeout);
+
+    $summary = $verdict->summary();
+
+    if ($summary !== null) {
+        printf("Open findings: %s.\n", $summary);
+    }
+
+    echo match ($verdict->status) {
+        GateResult::PASSED => $threshold === null
+            ? "Scan complete.\n"
+            : sprintf("Gate passed: nothing at %s or above.\n", $threshold),
+        GateResult::BREACHED => sprintf("Gate FAILED: %s.\n", $verdict->detail),
+        default => sprintf("Gate could not decide: %s\n", $verdict->detail),
+    };
+
+    return $verdict->exitCode();
+}
+
 switch ($command) {
     case 'report':
         $client = new Client($logger, new Resolver($logger), new Reporter($logger));
@@ -63,12 +103,39 @@ switch ($command) {
             default => sprintf("Skipped: %s\n", $result->detail),
         };
 
+        // CI gating. --fail-on= implies --wait, because the findings a threshold
+        // is compared against do not exist until the scan behind the report has
+        // run. This is the only mode allowed to fail a build.
+        if (isset($options['wait']) || isset($options['fail-on'])) {
+            exit(depman_gate($root, $logger, $options, $result));
+        }
+
         // Only an explicit --fail-on-error, or the config equivalent, makes a
         // failure exit non-zero. Everything else exits 0 by design.
         $failOnError = isset($options['fail-on-error'])
             || (Config::load($root, $logger)?->failOnError() ?? false);
 
         exit($result->isFailure() && $failOnError ? 1 : 0);
+
+    case 'push':
+        $push = (new Pusher($logger, new Reporter($logger)))->push($root);
+
+        echo match ($push->status) {
+            'drained' => $push->sent === 0 && $push->discarded === 0
+                ? "Nothing spooled.\n"
+                : sprintf("Pushed %d spooled report%s.%s\n", $push->sent, $push->sent === 1 ? '' : 's',
+                    $push->discarded === 0 ? '' : sprintf(' Discarded %d that will never be accepted.', $push->discarded)),
+            'stopped' => sprintf("Pushed %d spooled report%s; %d still queued (%s).\n",
+                $push->sent, $push->sent === 1 ? '' : 's', $push->remaining, $push->detail),
+            default => sprintf("Skipped: %s\n", $push->detail),
+        };
+
+        // Same contract as `report`: an undeliverable spool is what the spool is
+        // for and exits 0. Only a rejection, and only when asked, is non-zero.
+        $failOnError = isset($options['fail-on-error'])
+            || (Config::load($root, $logger)?->failOnError() ?? false);
+
+        exit($push->isFailure() && $failOnError ? 1 : 0);
 
     case 'doctor':
         $config = Config::load($root, $logger);
@@ -125,8 +192,19 @@ switch ($command) {
         depman — report installed Composer dependencies to DepMan
 
           depman report [--fail-on-error]   Report the installed tree now
+          depman push  [--fail-on-error]    Send everything left in the offline spool
           depman doctor                     Show the resolved configuration
           depman install-hook               Add the post-install hook to composer.json
+
+        CI gating — the only mode that may fail a build. Put it in its own step,
+        never in post-install-cmd:
+
+          depman report --wait [--fail-on=<severity>] [--wait-timeout=<seconds>]
+
+        Waits for DepMan to scan the report, then exits 1 if any open finding in
+        that environment is at <severity> or worse, and 2 if it could not find
+        out. <severity> is one of critical, high, medium, low, unknown; the wait
+        defaults to 300 seconds.
 
         The token is read from DEPMAN_TOKEN, DEPMAN_TOKEN_FILE, or
         ~/.depman/credentials. It must never be placed in depman.json, which is

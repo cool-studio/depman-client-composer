@@ -105,7 +105,13 @@ final class Client
                 }
             }
 
-            return Result::reported($count, $deduplicated);
+            $statusUrl = $decoded['statusUrl'] ?? null;
+
+            return Result::reported(
+                $count,
+                $deduplicated,
+                is_string($statusUrl) && $statusUrl !== '' ? $statusUrl : null,
+            );
         }
 
         // A rate limit is not a failure. A developer adding packages one at a

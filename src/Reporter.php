@@ -30,7 +30,7 @@ class Reporter
      * constant that lags the tag makes every report lie about itself. See the
      * client release checklist in docs/release-checklist.md.
      */
-    public const CLIENT_VERSION = '0.1.3';
+    public const CLIENT_VERSION = '0.1.4';
 
     public function __construct(private readonly Logger $logger) {}
 
@@ -113,16 +113,50 @@ class Reporter
             'User-Agent: '.self::CLIENT_NAME.'/'.self::CLIENT_VERSION,
         ];
 
-        return function_exists('curl_init')
-            ? $this->sendWithCurl($url, $headers, $body, $timeoutMs)
-            : $this->sendWithStream($url, $headers, $body, $timeoutMs);
+        return $this->request('POST', $url, $headers, $body, $timeoutMs);
+    }
+
+    /**
+     * A GET against a URL the server itself handed us, for `report --wait`.
+     *
+     * Overridable for the same reason `send()` is: polling is the other half of
+     * CI gating, and every branch of it is a response the client cannot produce
+     * without a live server and a queue.
+     *
+     * **The caller must have checked the origin before calling this.** The URL
+     * arrives in a response body, and a bearer token belongs to one host only —
+     * see Gate::sameOrigin().
+     *
+     * @return array{status: int, body: string}|null Null on a transport failure.
+     */
+    public function fetch(string $url, string $token, int $timeoutMs): ?array
+    {
+        $headers = [
+            'Authorization: Bearer '.$token,
+            'Accept: application/json',
+            'Depman-Wire-Version: '.self::WIRE_VERSION,
+            'User-Agent: '.self::CLIENT_NAME.'/'.self::CLIENT_VERSION,
+        ];
+
+        return $this->request('GET', $url, $headers, null, $timeoutMs);
     }
 
     /**
      * @param  array<int, string>  $headers
      * @return array{status: int, body: string}|null
      */
-    private function sendWithCurl(string $url, array $headers, string $body, int $timeoutMs): ?array
+    private function request(string $method, string $url, array $headers, ?string $body, int $timeoutMs): ?array
+    {
+        return function_exists('curl_init')
+            ? $this->sendWithCurl($method, $url, $headers, $body, $timeoutMs)
+            : $this->sendWithStream($method, $url, $headers, $body, $timeoutMs);
+    }
+
+    /**
+     * @param  array<int, string>  $headers
+     * @return array{status: int, body: string}|null
+     */
+    private function sendWithCurl(string $method, string $url, array $headers, ?string $body, int $timeoutMs): ?array
     {
         $handle = curl_init($url);
 
@@ -131,14 +165,17 @@ class Reporter
         }
 
         curl_setopt_array($handle, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT_MS => $timeoutMs,
             CURLOPT_CONNECTTIMEOUT_MS => min($timeoutMs, 5000),
             CURLOPT_FOLLOWLOCATION => false,
         ]);
+
+        if ($body !== null) {
+            curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
+        }
 
         $response = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
@@ -163,14 +200,17 @@ class Reporter
      * @param  array<int, string>  $headers
      * @return array{status: int, body: string}|null
      */
-    private function sendWithStream(string $url, array $headers, string $body, int $timeoutMs): ?array
+    private function sendWithStream(string $method, string $url, array $headers, ?string $body, int $timeoutMs): ?array
     {
         $context = stream_context_create(['http' => [
-            'method' => 'POST',
+            'method' => $method,
             'header' => implode("\r\n", $headers),
-            'content' => $body,
+            'content' => $body ?? '',
             'timeout' => $timeoutMs / 1000,
             'ignore_errors' => true,
+            // Same reason the curl path sets CURLOPT_FOLLOWLOCATION => false: a
+            // redirect would replay the bearer token at whatever host answered.
+            'follow_location' => 0,
         ]]);
 
         $response = @file_get_contents($url, false, $context);

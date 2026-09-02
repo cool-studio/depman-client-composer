@@ -184,6 +184,33 @@ class ClientTest extends TestCase
         $this->assertFalse($result->deduplicated);
     }
 
+    public function test_the_servers_status_url_is_carried_back_for_gating(): void
+    {
+        $this->project();
+
+        // The only input CI gating has. Reconstructing it from the endpoint and
+        // a report id would mean the client learning a URL shape the server
+        // already told it.
+        $result = $this->client([
+            'status' => 202,
+            'body' => json_encode(['statusUrl' => 'https://depman.example/api/v1/reports/01J8XQ']),
+        ])->report($this->root, 'manual', $this->env());
+
+        $this->assertSame('https://depman.example/api/v1/reports/01J8XQ', $result->statusUrl);
+    }
+
+    public function test_a_report_with_no_status_url_carries_null_rather_than_an_empty_string(): void
+    {
+        $this->project();
+
+        // An unsupported ecosystem is accepted as inventory and creates no
+        // Report, so there is nothing to poll. Null says that; '' does not.
+        $result = $this->client(['status' => 202, 'body' => json_encode(['statusUrl' => null])])
+            ->report($this->root, 'manual', $this->env());
+
+        $this->assertNull($result->statusUrl);
+    }
+
     public function test_a_200_marks_the_report_deduplicated(): void
     {
         $this->project();

@@ -95,6 +95,7 @@ skip, not an error** — a contributor who has just cloned your repository gets 
 | Command | Does |
 |---|---|
 | `vendor/bin/depman report` | Report the installed tree now |
+| `vendor/bin/depman push` | Send anything left in the offline spool |
 | `vendor/bin/depman doctor` | Print the resolved config, the environment **and where it came from**, and which mechanism supplied the token — never the value |
 | `vendor/bin/depman install-hook` | Wire the post-install hook into `composer.json` |
 
@@ -107,6 +108,36 @@ Environment:  production (from APP_ENV)
 Token:        found via .env
 Include dev:  yes
 ```
+
+## When it cannot reach us
+
+A report that cannot be delivered — you are offline, rate-limited, or we are having a bad day — is
+written to `.depman/spool` rather than lost, and `depman push` sends it later. The directory holds
+twenty and discards the oldest first, because a stale inventory is worth less than a recent one.
+
+`push` deletes only what we accepted. If we are still unreachable it leaves everything where it is
+and exits `0`. Add `.depman/` to your `.gitignore`; the client will warn you if you have not.
+
+## Failing a build on purpose
+
+Everything above is built never to break your build. This is the one exception, and you have to ask
+for it in a step of your own:
+
+```bash
+vendor/bin/depman report --wait --fail-on=high
+```
+
+It waits for us to scan the report, prints the open findings for that environment, and exits `1` if
+any of them is `high` or worse. Thresholds are `critical`, `high`, `medium`, `low` and `unknown` —
+the last also catches advisories nobody has been able to score.
+
+**It fails closed.** Exit `1` means we looked and you are over the line; exit `2` means we could not
+find out — the wait ran out, the token was rejected, the threshold was misspelled. A security gate
+that cannot get an answer and reports success is worse than no gate at all. Retry a `2` if you want
+to; do not treat it as a pass.
+
+`--wait-timeout=` bounds the wait, defaulting to 300 seconds. Never put this in
+`post-install-cmd` — it belongs in a step somebody added deliberately.
 
 ## Requirements
 
