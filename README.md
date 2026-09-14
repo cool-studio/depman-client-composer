@@ -154,6 +154,6 @@ composer check     # pint --test, phpstan, phpunit
 
 Changes belong in the [monorepo](https://github.com/cool-studio/depman), not here.
 
-## License
+## Licence
 
-MIT.
+[MIT](LICENSE). © 2026 Cool Studio.
