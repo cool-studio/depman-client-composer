@@ -15,6 +15,15 @@
     <testsuites>
         <testsuite name="client">
             <directory>tests</directory>
+            <exclude>tests/Smoke</exclude>
+        </testsuite>
+        <!--
+            Installs the dist archive into a scratch project and runs it
+            (ADR-0055). Separate so `composer test` stays fast while editing;
+            `composer check` runs both, and that is the gate.
+        -->
+        <testsuite name="smoke">
+            <directory>tests/Smoke</directory>
         </testsuite>
     </testsuites>
     <source>
